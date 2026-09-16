@@ -196,7 +196,7 @@ def page_alert_queue(emails: list[EmailRecord]) -> None:
     c.metric("Quarantine recommended (60-79)", mid)
     d.metric("Needs human review", int((frame["Review"] == "yes").sum()))
 
-    st.dataframe(frame, use_container_width=True, hide_index=True)
+    st.dataframe(frame, width="stretch", hide_index=True)
     st.caption("Risk bands: 0-29 monitor, 30-59 analyst review, 60-79 recommend quarantine, 80-100 contain and purge.")
 
 
@@ -295,7 +295,7 @@ def page_campaign(emails: list[EmailRecord]) -> None:
                     for c, reasons in cluster
                 ]
             ),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
     else:
@@ -310,7 +310,7 @@ def page_campaign(emails: list[EmailRecord]) -> None:
         kinds[attrs.get("kind", "other")] = kinds.get(attrs.get("kind", "other"), 0) + 1
     st.dataframe(
         pd.DataFrame([{"Node type": k, "Count": v} for k, v in sorted(kinds.items())]),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
     with st.expander("Indicators to sweep the tenant for"):
@@ -409,12 +409,12 @@ def page_detection_quality(emails: list[EmailRecord]) -> None:
     )
 
     st.markdown("#### Per-class metrics")
-    st.dataframe(pd.DataFrame(evaluator.per_class_metrics(pairs)), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(evaluator.per_class_metrics(pairs)), width="stretch", hide_index=True)
 
     st.markdown("#### Expected vs predicted")
     st.dataframe(
         pd.DataFrame(evaluator.detail_rows(emails, predictions, confidences)),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
@@ -424,12 +424,12 @@ def page_detection_quality(emails: list[EmailRecord]) -> None:
             pd.Series([p[0] for p in pairs], name="Expected"),
             pd.Series([p[1] for p in pairs], name="Predicted"),
         )
-        st.dataframe(matrix, use_container_width=True)
+        st.dataframe(matrix, width="stretch")
 
     st.markdown("#### Low-confidence queue")
     queue = evaluator.low_confidence_queue(emails, confidences)
     if queue:
-        st.dataframe(pd.DataFrame(queue), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(queue), width="stretch", hide_index=True)
         st.caption("These are where analyst review adds the most value.")
     else:
         st.info("No messages below the confidence threshold.")
@@ -451,7 +451,7 @@ def page_audit() -> None:
             ["timestamp", "message_id", "event_type", "verdict", "risk_score",
              "policy_band", "action", "approved", "analyst", "llm_mode", "notes"]
         ]
-        st.dataframe(frame, use_container_width=True, hide_index=True)
+        st.dataframe(frame, width="stretch", hide_index=True)
     else:
         st.info("No audit events yet. Approve a containment action on the Investigation page.")
 
@@ -462,7 +462,7 @@ def page_audit() -> None:
             pd.DataFrame(feedback)[
                 ["timestamp", "message_id", "predicted", "feedback", "corrected", "analyst", "notes"]
             ],
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
     else:
