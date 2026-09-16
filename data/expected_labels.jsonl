@@ -1,0 +1,14 @@
+{"id": "msg-001", "scenario": "Benign vendor invoice", "expected_verdict": "Benign", "malicious": false}
+{"id": "msg-002", "scenario": "Credential phishing", "expected_verdict": "Credential phishing", "malicious": true}
+{"id": "msg-003", "scenario": "Executive payment request", "expected_verdict": "Suspected BEC", "malicious": true}
+{"id": "msg-004", "scenario": "Malicious attachment lure", "expected_verdict": "Phishing - malicious attachment suspected", "malicious": true}
+{"id": "msg-005", "scenario": "Authenticated compromised vendor", "expected_verdict": "Suspected BEC", "malicious": true}
+{"id": "msg-006", "scenario": "QR-code login lure", "expected_verdict": "Credential phishing", "malicious": true}
+{"id": "msg-007", "scenario": "Collaboration-service lure", "expected_verdict": "Credential phishing", "malicious": true}
+{"id": "msg-008", "scenario": "Vendor fraud - RFQ phishing", "expected_verdict": "Vendor RFQ fraud suspected", "malicious": true}
+{"id": "msg-009", "scenario": "Payment fraud - vague AP demand", "expected_verdict": "Payment fraud suspected", "malicious": true}
+{"id": "msg-010", "scenario": "Invoice fraud - fake invoice thread", "expected_verdict": "Invoice fraud suspected", "malicious": true}
+{"id": "msg-011", "scenario": "Billing account update fraud", "expected_verdict": "Suspected BEC", "malicious": true}
+{"id": "msg-012", "scenario": "Payroll fraud", "expected_verdict": "Payroll fraud suspected", "malicious": true}
+{"id": "msg-013", "scenario": "Fake job phishing", "expected_verdict": "Fake job phishing", "malicious": true}
+{"id": "msg-014", "scenario": "Advance-fee phishing scam", "expected_verdict": "Advance-fee phishing scam", "malicious": true}

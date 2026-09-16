@@ -1,0 +1,9 @@
+streamlit>=1.36
+pandas>=2.2
+plotly>=5.22
+networkx>=3.3
+pydantic>=2.7
+langgraph>=0.2
+langchain-groq>=0.2
+python-dotenv>=1.0
+pytest>=8.0
