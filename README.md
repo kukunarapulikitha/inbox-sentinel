@@ -10,6 +10,14 @@ Built as a focused demonstration of applied AI engineering in a security
 context: where an LLM genuinely helps, where it must not be trusted, and how
 to keep the whole thing auditable.
 
+![Inbox Sentinel architecture](assets/inbox_sentinel_architecture.png)
+
+| Document | What it covers |
+|---|---|
+| **README** (this file) | the pitch, the demo script, setup, measured results |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | technical walkthrough: module map, graph state, the LLM trust boundary, extension seams |
+| [threat_model.md](threat_model.md) | security posture: injection handling, least privilege, auditability |
+
 ## The 90-second pitch
 
 A finance employee gets an email from a known vendor asking to update bank
@@ -25,6 +33,8 @@ MITRE mapping, and a containment action that will not execute without an
 approval click. The approval is written to an append-only audit log.
 
 ## Architecture
+
+A condensed view; [ARCHITECTURE.md](ARCHITECTURE.md) has the full technical walkthrough.
 
 ```
 parse
@@ -106,10 +116,15 @@ call, and always require a human.
 
 ### Graceful degradation
 
-Every LLM node has a deterministic fallback. A missing key, rate limit, timeout
-or schema-validation failure drops that node to its rule path, records which
-path ran, and the sidebar badge reads `LLM: fallback (rules)` instead of
-`LLM: live`. The app is fully functional with no API key at all.
+Every LLM node walks the model chain above before it gives up. Only when every
+model fails does the node drop to its rule path. The app records which path ran
+per node, so the badge distinguishes `live`, `partial` (one node on rules) and
+`fallback` (fully deterministic) rather than collapsing the middle case. It is
+fully functional with no API key at all.
+
+This was not hypothetical: the model this was first built against,
+`llama-3.3-70b-versatile`, was decommissioned by Groq mid-build, and every LLM
+node silently degraded to rules until the chain was added.
 
 ## Setup
 
@@ -122,7 +137,18 @@ cp .env.example .env        # then paste your Groq key into GROQ_API_KEY
 streamlit run app/ui/streamlit_app.py
 ```
 
-Without a key the app still runs end to end on the rule path.
+Without a key the app still runs end to end on the rule path, and the sidebar
+badge reads `LLM: fallback (rules)` instead of `LLM: live`.
+
+`GOOGLE_API_KEY` is optional. When set it becomes the tail of the model chain:
+
+```
+groq/openai/gpt-oss-120b -> groq/openai/gpt-oss-20b
+  -> groq/qwen/qwen3.8-27b -> google/gemini-3.5-flash -> deterministic rules
+```
+
+The chain spans two providers on purpose - the first three share a Groq
+dependency, so the Gemini tail is what survives a whole-provider outage.
 
 ```bash
 pytest -q                   # test suite
@@ -160,8 +186,13 @@ app/
   models/    email_models.py, findings.py, incident_models.py
   ui/        streamlit_app.py
 data/        emails.jsonl, interactions.jsonl, expected_labels.jsonl
-tests/
+tests/       51 tests, hermetic, ~1s
+assets/      architecture diagram
 ```
+
+Dependencies run one way only: `models` <- `services` <- `agents` <- `ui`, so
+the whole detection stack is testable without Streamlit. See
+[ARCHITECTURE.md](ARCHITECTURE.md) for what each module does.
 
 ## Next integration points
 
