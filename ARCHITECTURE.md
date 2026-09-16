@@ -6,7 +6,7 @@ through the graph, where the LLM is and is not trusted, and where to extend it.
 For the pitch, the demo script and setup, see [README.md](README.md). For the
 security posture, see [threat_model.md](threat_model.md).
 
-![Inbox Sentinel architecture](assets/inbox_sentinel_architecture_transparent.png)
+![Inbox Sentinel architecture](assets/inbox_sentinel_architecture.png)
 
 ---
 
