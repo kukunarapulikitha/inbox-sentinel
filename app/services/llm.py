@@ -22,8 +22,22 @@ from pydantic import BaseModel
 
 load_dotenv()
 
-MODEL_NAME = "openai/gpt-oss-120b"
+# Tried in order. A model that is decommissioned, rate-limited or refuses the
+# schema falls through to the next one before the node drops to its rule path.
+# Groq retired the general-purpose Llama chat models, so there is no Llama
+# option here; the only Llama models still served are the Prompt Guard
+# injection classifiers, which cannot do this reasoning.
+MODEL_CHAIN = [
+    "openai/gpt-oss-120b",   # most capable available
+    "openai/gpt-oss-20b",    # same family, cheaper and faster
+    "qwen/qwen3.8-27b",      # different vendor, so a family-wide outage is survivable
+]
+MODEL_NAME = MODEL_CHAIN[0]
 PROVIDER_LABEL = f"groq/{MODEL_NAME}"
+
+# Set by structured_call to whichever model actually answered, so the UI and
+# the audit log can record it rather than assuming the primary.
+last_model_used: str | None = None
 
 TSchema = TypeVar("TSchema", bound=BaseModel)
 
@@ -51,22 +65,21 @@ def api_key_present() -> bool:
     return bool(os.getenv("GROQ_API_KEY", "").strip())
 
 
-_client = None
+_clients: dict[str, object] = {}
 
 
-def get_client():
-    """Lazily build the ChatGroq client. Cached across calls."""
-    global _client
-    if _client is not None:
-        return _client
+def get_client(model: str = MODEL_NAME):
+    """Lazily build a ChatGroq client per model. Cached across calls."""
+    if model in _clients:
+        return _clients[model]
     if not api_key_present():
         raise LLMUnavailable("GROQ_API_KEY is not set")
     try:
         from langchain_groq import ChatGroq
     except ImportError as exc:  # pragma: no cover - dependency guard
         raise LLMUnavailable(f"langchain-groq not installed: {exc}") from exc
-    _client = ChatGroq(model=MODEL_NAME, temperature=0, timeout=20, max_retries=1)
-    return _client
+    _clients[model] = ChatGroq(model=model, temperature=0, timeout=20, max_retries=1)
+    return _clients[model]
 
 
 def wrap_untrusted(label: str, content: str) -> str:
@@ -76,23 +89,33 @@ def wrap_untrusted(label: str, content: str) -> str:
 
 
 def structured_call(schema: type[TSchema], instruction: str, untrusted_blocks: str) -> TSchema:
-    """Run one structured-output call, or raise LLMUnavailable.
+    """Run one structured-output call against the model chain.
 
-    Callers are expected to catch LLMUnavailable and use their rule-based path.
+    Each model in MODEL_CHAIN is tried in order. Only when every model fails
+    does this raise LLMUnavailable, which the calling agent catches to use its
+    rule-based path.
     """
-    try:
-        model = get_client().with_structured_output(schema)
-        result = model.invoke(
-            [
-                ("system", INJECTION_GUARD),
-                ("human", f"{instruction}\n\n{untrusted_blocks}"),
-            ]
-        )
-    except LLMUnavailable:
-        raise
-    except Exception as exc:  # network, rate limit, timeout, schema validation
-        raise LLMUnavailable(f"{type(exc).__name__}: {exc}") from exc
+    global last_model_used
 
-    if not isinstance(result, schema):
-        raise LLMUnavailable("model returned an unexpected payload type")
-    return result
+    if not api_key_present():
+        raise LLMUnavailable("GROQ_API_KEY is not set")
+
+    failures: list[str] = []
+    for model_name in MODEL_CHAIN:
+        try:
+            model = get_client(model_name).with_structured_output(schema)
+            result = model.invoke(
+                [
+                    ("system", INJECTION_GUARD),
+                    ("human", f"{instruction}\n\n{untrusted_blocks}"),
+                ]
+            )
+            if not isinstance(result, schema):
+                raise LLMUnavailable("model returned an unexpected payload type")
+            last_model_used = model_name
+            return result
+        except Exception as exc:  # network, rate limit, timeout, schema validation
+            failures.append(f"{model_name}: {type(exc).__name__}: {exc}")
+            continue
+
+    raise LLMUnavailable("all models failed -> " + " | ".join(failures))

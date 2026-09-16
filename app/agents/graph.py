@@ -22,7 +22,7 @@ from app.models.email_models import EmailRecord
 from app.models.findings import Finding
 from app.models.incident_models import IncidentDecision, PolicyDecision
 from app.services import policy_engine
-from app.services.llm import PROVIDER_LABEL
+from app.services import llm as llm_service
 
 
 def _merge(existing: list[Finding], incoming: list[Finding]) -> list[Finding]:
@@ -101,7 +101,8 @@ def policy_node(state: InvestigationState) -> dict:
         rationale=verdict.get("rationale", ""),
         needs_human_review=verdict.get("needs_human_review", False),
         llm_mode="live" if live else "fallback",
-        llm_detail=PROVIDER_LABEL if live else "deterministic rules",
+        llm_detail=f"groq/{llm_service.last_model_used}" if live and llm_service.last_model_used
+        else ("groq (model unknown)" if live else "deterministic rules"),
     )
     return {"policy": policy, "decision": decision}
 
