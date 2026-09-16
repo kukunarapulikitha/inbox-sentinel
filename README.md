@@ -58,6 +58,35 @@ The payoff is failure attribution. Every agent returns the same typed `Finding`
 schema, so when a verdict is wrong you can point at the finding that caused it
 instead of re-reading one giant prompt.
 
+### Measured results on the seeded corpus
+
+Model: `openai/gpt-oss-120b` on Groq, temperature 0, structured output.
+14 labelled messages, verdict agreement against `data/expected_labels.jsonl`:
+
+| Configuration | Agreement | Notes |
+|---|---|---|
+| Deterministic rules only | 12/14 | misses msg-003 (BEC) and msg-007 (Teams-branded phish) |
+| LLM labels the verdict | 11/14 | fixes msg-003, but collapses msg-008 and msg-009 into "Suspected BEC" |
+| **Hybrid (shipped)** | **13/14** | rule floors own the subtype label, LLM owns intent and rationale |
+
+Binary malicious-vs-benign is P=1.0 / R=1.0 / FPR=0 / FNR=0 in all three
+configurations - every disagreement is a subtype confusion, not a missed
+threat.
+
+The hybrid result is the actual finding of this build. The model reads intent
+reliably - it upgraded msg-003 from "Suspicious" to BEC by recognising the
+pretext - but it flattens fraud taxonomy, calling vendor RFQ fraud and payment
+fraud "Suspected BEC" because they are all broadly BEC-shaped. So when a
+high-confidence deterministic pattern fires, the rule floor owns the label and
+the LLM keeps the rationale, confidence and needs-review call. Neither path
+alone is as good as the split.
+
+Remaining miss: msg-007, a Teams-branded credential phish on
+`teams-alerts.example`. The lookalike check only catches homoglyphs
+(`micros0ft`), so a domain that legitimately *contains* a brand name passes.
+Detecting "contains a brand token but is not that brand's domain" is the next
+detection rule to add.
+
 ### Trust boundary
 
 The model never selects a containment action, sets a risk score, or changes

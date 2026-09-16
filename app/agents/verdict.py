@@ -108,8 +108,22 @@ def decide_verdict(email: EmailRecord, findings: list[Finding]) -> dict:
         verdict = assessment.verdict.strip()
         if verdict not in VERDICT_LABELS:
             raise LLMUnavailable(f"off-vocabulary verdict label {verdict!r}")
+
+        # Taxonomy precedence: when a high-confidence deterministic pattern
+        # fires (a bank-change request, a payroll change, a risky attachment),
+        # the rule floor owns the *label*. Measured on the seeded corpus the
+        # model reliably reads intent but collapses fraud subtypes into the
+        # broader "Suspected BEC" - it called msg-008 (vendor RFQ fraud) and
+        # msg-009 (payment fraud) BEC. The LLM still owns the rationale,
+        # confidence and needs-review call, which is where it adds value.
+        label_source = "llm"
+        if floor_verdict and verdict != floor_verdict:
+            verdict = floor_verdict
+            label_source = "rule_floor"
+
         return {
             "verdict": verdict,
+            "label_source": label_source,
             "threat_type": THREAT_FAMILIES.get(verdict, assessment.threat_type),
             "risk_score": risk,
             "confidence": min(0.98, max(0.3, assessment.confidence)),
@@ -122,6 +136,7 @@ def decide_verdict(email: EmailRecord, findings: list[Finding]) -> dict:
     except LLMUnavailable as exc:
         return {
             "verdict": rule_verdict,
+            "label_source": "rules",
             "threat_type": THREAT_FAMILIES.get(rule_verdict, "Needs review"),
             "risk_score": risk,
             "confidence": min(0.98, max((f.confidence for f in findings), default=0.6)),

@@ -22,7 +22,7 @@ from pydantic import BaseModel
 
 load_dotenv()
 
-MODEL_NAME = "llama-3.3-70b-versatile"
+MODEL_NAME = "openai/gpt-oss-120b"
 PROVIDER_LABEL = f"groq/{MODEL_NAME}"
 
 TSchema = TypeVar("TSchema", bound=BaseModel)

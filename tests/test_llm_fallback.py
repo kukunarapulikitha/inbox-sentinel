@@ -84,3 +84,52 @@ def test_injection_attempt_still_scores_as_malicious(by_id, monkeypatch):
     decision, _ = investigate(email)
     assert decision.verdict == "Suspected BEC"
     assert decision.risk_score >= 90
+
+
+def test_rule_floor_owns_the_subtype_label(by_id, monkeypatch):
+    """Taxonomy precedence.
+
+    The model reads intent well but collapses fraud subtypes into the broader
+    "Suspected BEC" - measured on msg-008 (vendor RFQ fraud) and msg-009
+    (payment fraud). When a deterministic floor fires it owns the label; the
+    LLM keeps the rationale.
+    """
+    from app.models.findings import VerdictAssessment
+
+    def over_general(schema, instruction, blocks):
+        # Dispatch on the requested schema so both LLM nodes get valid output.
+        if schema is ContentBecAssessment:
+            return ContentBecAssessment(severity="high", confidence=0.9)
+        return VerdictAssessment(
+            verdict="Suspected BEC",
+            threat_type="Business email compromise",
+            confidence=0.9,
+            rationale="Model rationale is preserved.",
+        )
+
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    monkeypatch.setattr("app.agents.verdict.structured_call", over_general)
+    monkeypatch.setattr("app.agents.content_bec.structured_call", over_general)
+
+    decision, _ = investigate(by_id["msg-009"])
+    assert decision.verdict == "Payment fraud suspected"
+    assert decision.rationale == "Model rationale is preserved."
+
+
+def test_llm_label_used_when_no_floor_fires(by_id, monkeypatch):
+    """The inverse: with no deterministic floor, the model's label stands.
+    This is what upgraded msg-003 from "Suspicious" to "Suspected BEC"."""
+    from app.models.findings import VerdictAssessment
+
+    def judged(schema, instruction, blocks):
+        return VerdictAssessment(
+            verdict="Suspected BEC",
+            threat_type="Business email compromise",
+            confidence=0.88,
+            rationale="Semantic read of intent.",
+        )
+
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    monkeypatch.setattr("app.agents.verdict.structured_call", judged)
+    decision, _ = investigate(by_id["msg-003"])
+    assert decision.verdict == "Suspected BEC"
