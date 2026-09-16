@@ -81,9 +81,23 @@ def policy_node(state: InvestigationState) -> dict:
         needs_human_review=verdict.get("needs_human_review", False),
     )
 
-    llm_sources = {f.source for f in findings if f.category == "content_bec"}
-    llm_sources.add(verdict.get("source", "rules"))
-    live = llm_sources == {"llm"}
+    # Report degradation honestly per node. A partial fallback - say the
+    # content reasoner dropped to rules while verdict fusion still answered -
+    # must not look identical to a total LLM outage.
+    node_sources = {
+        "content_bec": next(
+            (f.source for f in findings if f.category == "content_bec"), "rules"
+        ),
+        "verdict": verdict.get("source", "rules"),
+    }
+    llm_nodes = [name for name, source in node_sources.items() if source == "llm"]
+    if len(llm_nodes) == len(node_sources):
+        mode = "live"
+    elif llm_nodes:
+        mode = "partial"
+    else:
+        mode = "fallback"
+    live = mode == "live"
 
     uncertainties = list(verdict.get("uncertainties", []))
     for finding in findings:
@@ -100,11 +114,21 @@ def policy_node(state: InvestigationState) -> dict:
         mitre_techniques=verdict.get("mitre_techniques", []),
         rationale=verdict.get("rationale", ""),
         needs_human_review=verdict.get("needs_human_review", False),
-        llm_mode="live" if live else "fallback",
-        llm_detail=f"groq/{llm_service.last_model_used}" if live and llm_service.last_model_used
-        else ("groq (model unknown)" if live else "deterministic rules"),
+        llm_mode=mode,
+        llm_detail=_llm_detail(mode, llm_nodes, node_sources),
     )
     return {"policy": policy, "decision": decision}
+
+
+def _llm_detail(mode: str, llm_nodes: list[str], node_sources: dict[str, str]) -> str:
+    """Human-readable account of which nodes used a model and which used rules."""
+    if mode == "fallback":
+        return "deterministic rules (all nodes)"
+    model = llm_service.last_model_used or "unknown model"
+    if mode == "live":
+        return model
+    rule_nodes = [name for name, source in node_sources.items() if source != "llm"]
+    return f"{model} for {', '.join(sorted(llm_nodes))}; rules for {', '.join(sorted(rule_nodes))}"
 
 
 # --- graph ---------------------------------------------------------------

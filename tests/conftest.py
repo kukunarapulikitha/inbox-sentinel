@@ -14,13 +14,15 @@ from app.services.email_parser import load_emails
 
 @pytest.fixture(autouse=True)
 def force_rule_path(monkeypatch):
-    """Clear the key so every test runs the deterministic path.
+    """Clear every provider key so tests run the deterministic path.
 
-    Without this, adding a real GROQ_API_KEY to .env would make the suite
-    non-deterministic.
+    This keeps the suite hermetic and fast. Missing GOOGLE_API_KEY here once
+    made the suite issue real Gemini calls, taking it from 0.5s to 224s.
     """
-    monkeypatch.delenv("GROQ_API_KEY", raising=False)
-    monkeypatch.setattr("app.services.llm._client", None, raising=False)
+    for env_var in ("GROQ_API_KEY", "GOOGLE_API_KEY"):
+        monkeypatch.delenv(env_var, raising=False)
+    # Drop cached clients so a previous test's provider cannot leak in.
+    monkeypatch.setattr("app.services.llm._clients", {}, raising=False)
 
 
 @pytest.fixture

@@ -7,3 +7,4 @@ langgraph>=0.2
 langchain-groq>=0.2
 python-dotenv>=1.0
 pytest>=8.0
+langchain-google-genai>=4.4

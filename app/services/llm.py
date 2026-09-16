@@ -22,21 +22,28 @@ from pydantic import BaseModel
 
 load_dotenv()
 
-# Tried in order. A model that is decommissioned, rate-limited or refuses the
-# schema falls through to the next one before the node drops to its rule path.
-# Groq retired the general-purpose Llama chat models, so there is no Llama
-# option here; the only Llama models still served are the Prompt Guard
-# injection classifiers, which cannot do this reasoning.
-MODEL_CHAIN = [
-    "openai/gpt-oss-120b",   # most capable available
-    "openai/gpt-oss-20b",    # same family, cheaper and faster
-    "qwen/qwen3.8-27b",      # different vendor, so a family-wide outage is survivable
+# Tried in order. A model that is decommissioned, rate-limited, or refuses the
+# schema falls through to the next entry before the node drops to its rule path.
+# The chain deliberately spans two providers: the first three entries share a
+# Groq dependency, so the Gemini tail is what survives a whole-provider outage.
+#
+# There is no Llama entry: Groq retired the general-purpose Llama chat models.
+# The only Llama models still served there are the Prompt Guard injection
+# classifiers, which cannot produce this structured output.
+MODEL_CHAIN: list[tuple[str, str]] = [
+    ("groq", "openai/gpt-oss-120b"),   # most capable on Groq
+    ("groq", "openai/gpt-oss-20b"),    # same family, cheaper and faster
+    ("groq", "qwen/qwen3.8-27b"),      # different model family, same provider
+    ("google", "gemini-3.5-flash"),    # different provider entirely
 ]
-MODEL_NAME = MODEL_CHAIN[0]
-PROVIDER_LABEL = f"groq/{MODEL_NAME}"
+MODEL_NAME = MODEL_CHAIN[0][1]
+PROVIDER_LABEL = f"{MODEL_CHAIN[0][0]}/{MODEL_NAME}"
 
-# Set by structured_call to whichever model actually answered, so the UI and
-# the audit log can record it rather than assuming the primary.
+# Which API key each provider needs.
+PROVIDER_KEYS = {"groq": "GROQ_API_KEY", "google": "GOOGLE_API_KEY"}
+
+# Set by structured_call to whichever provider/model actually answered, so the
+# UI and the audit log record reality rather than assuming the primary.
 last_model_used: str | None = None
 
 TSchema = TypeVar("TSchema", bound=BaseModel)
@@ -61,25 +68,53 @@ class LLMUnavailable(RuntimeError):
     """Raised when the model cannot be reached or returned invalid structure."""
 
 
-def api_key_present() -> bool:
-    return bool(os.getenv("GROQ_API_KEY", "").strip())
+def api_key_present(provider: str | None = None) -> bool:
+    """True when the given provider has a key. With no argument, true when
+    *any* provider in the chain is usable."""
+    if provider is not None:
+        return bool(os.getenv(PROVIDER_KEYS.get(provider, ""), "").strip())
+    return any(api_key_present(name) for name, _ in MODEL_CHAIN)
 
 
-_clients: dict[str, object] = {}
+def available_models() -> list[str]:
+    """The chain entries that actually have a key, for display in the UI."""
+    return [f"{p}/{m}" for p, m in MODEL_CHAIN if api_key_present(p)]
 
 
-def get_client(model: str = MODEL_NAME):
-    """Lazily build a ChatGroq client per model. Cached across calls."""
-    if model in _clients:
-        return _clients[model]
-    if not api_key_present():
-        raise LLMUnavailable("GROQ_API_KEY is not set")
-    try:
-        from langchain_groq import ChatGroq
-    except ImportError as exc:  # pragma: no cover - dependency guard
-        raise LLMUnavailable(f"langchain-groq not installed: {exc}") from exc
-    _clients[model] = ChatGroq(model=model, temperature=0, timeout=20, max_retries=1)
-    return _clients[model]
+_clients: dict[tuple[str, str], object] = {}
+
+
+def get_client(provider: str, model: str):
+    """Lazily build a chat client per provider/model pair. Cached across calls."""
+    key = (provider, model)
+    if key in _clients:
+        return _clients[key]
+    if not api_key_present(provider):
+        raise LLMUnavailable(f"{PROVIDER_KEYS.get(provider, provider)} is not set")
+
+    if provider == "groq":
+        try:
+            from langchain_groq import ChatGroq
+        except ImportError as exc:  # pragma: no cover - dependency guard
+            raise LLMUnavailable(f"langchain-groq not installed: {exc}") from exc
+        client = ChatGroq(model=model, temperature=0, timeout=20, max_retries=1)
+    elif provider == "google":
+        try:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+        except ImportError as exc:  # pragma: no cover - dependency guard
+            raise LLMUnavailable(f"langchain-google-genai not installed: {exc}") from exc
+        client = ChatGoogleGenerativeAI(
+            model=model,
+            temperature=0,
+            timeout=20,
+            max_retries=1,
+            google_api_key=os.environ["GOOGLE_API_KEY"],
+        )
+    else:  # pragma: no cover - guards a typo in MODEL_CHAIN
+        raise LLMUnavailable(f"unknown provider {provider!r}")
+
+    _clients[key] = client
+    return client
 
 
 def wrap_untrusted(label: str, content: str) -> str:
@@ -98,12 +133,16 @@ def structured_call(schema: type[TSchema], instruction: str, untrusted_blocks: s
     global last_model_used
 
     if not api_key_present():
-        raise LLMUnavailable("GROQ_API_KEY is not set")
+        raise LLMUnavailable("no provider key is set (GROQ_API_KEY or GOOGLE_API_KEY)")
 
     failures: list[str] = []
-    for model_name in MODEL_CHAIN:
+    for provider, model_name in MODEL_CHAIN:
+        label = f"{provider}/{model_name}"
+        if not api_key_present(provider):
+            failures.append(f"{label}: no API key")
+            continue
         try:
-            model = get_client(model_name).with_structured_output(schema)
+            model = get_client(provider, model_name).with_structured_output(schema)
             result = model.invoke(
                 [
                     ("system", INJECTION_GUARD),
@@ -112,10 +151,10 @@ def structured_call(schema: type[TSchema], instruction: str, untrusted_blocks: s
             )
             if not isinstance(result, schema):
                 raise LLMUnavailable("model returned an unexpected payload type")
-            last_model_used = model_name
+            last_model_used = label
             return result
         except Exception as exc:  # network, rate limit, timeout, schema validation
-            failures.append(f"{model_name}: {type(exc).__name__}: {exc}")
+            failures.append(f"{label}: {type(exc).__name__}: {exc}")
             continue
 
     raise LLMUnavailable("all models failed -> " + " | ".join(failures))
